@@ -1,0 +1,71 @@
+
+# ============================================
+# Stage 1: Builder (compile TypeScript)
+# ============================================
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Installer pnpm
+RUN npm install -g pnpm
+
+# Copier package files
+COPY package.json pnpm-lock.yaml* tsconfig.json ./
+
+# Installer TOUTES les dépendances (dev incluses)
+# Enlever --frozen-lockfile
+RUN pnpm install
+
+# Copier le code source
+COPY src ./src
+
+# Build TypeScript → JavaScript
+RUN pnpm build
+
+# ============================================
+# Stage 2: Production (image finale légère)
+# ============================================
+FROM node:20-alpine AS production
+
+# Installer dumb-init (gestion signaux propre)
+RUN apk add --no-cache dumb-init
+
+WORKDIR /app
+
+# Installer pnpm
+RUN npm install -g pnpm
+
+# Copier package files
+COPY package.json pnpm-lock.yaml* ./
+
+# Installer SEULEMENT les dépendances de production
+# Enlever --frozen-lockfile
+RUN pnpm install --prod
+
+# Copier le code compilé depuis le builder
+COPY --from=builder /app/dist ./dist
+
+# Créer utilisateur non-root (sécurité)
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nodejs -u 1001 && \
+    chown -R nodejs:nodejs /app
+
+# Variables d'environnement
+ENV NODE_ENV=production \
+    PORT=3001
+
+# Changer vers utilisateur non-root
+USER nodejs
+
+# Exposer port
+EXPOSE 3001
+
+# Health check (Docker vérifie si l'app est vivante)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3001/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+
+# Utiliser dumb-init pour gérer les signaux
+ENTRYPOINT ["dumb-init", "--"]
+
+# Commande de démarrage
+CMD ["node", "dist/index.js"]

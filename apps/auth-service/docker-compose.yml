@@ -1,0 +1,60 @@
+
+
+services:
+  # Base de données MongoDB
+  mongodb:
+    image: mongo:7.0
+    container_name: perfume-auth-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: perfume_auth
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - perfume-network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/perfume_auth --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Service d'authentification
+  auth-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: perfume-auth-service
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: development
+      PORT: 3001
+      MONGODB_URI: mongodb://mongodb:27017/perfume_auth
+      JWT_SECRET: dev-secret-key-change-in-production
+      JWT_EXPIRES_IN: 7d
+      CORS_ORIGIN: "*"
+    volumes:
+      # Mount code pour hot-reload
+      - ./src:/app/src
+      - ./package.json:/app/package.json
+      - ./tsconfig.json:/app/tsconfig.json
+      # Exclure node_modules (utiliser celui du container)
+      - /app/node_modules
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - perfume-network
+
+# Volumes persistants
+volumes:
+  mongodb_data:
+    driver: local
+
+# Réseau interne
+networks:
+  perfume-network:
+    driver: bridge

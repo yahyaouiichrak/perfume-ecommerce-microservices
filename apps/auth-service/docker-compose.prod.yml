@@ -1,0 +1,59 @@
+
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: perfume-auth-mongodb-prod
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_DATABASE: perfume_auth
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+    volumes:
+      - mongodb_data_prod:/data/db
+      - mongodb_config_prod:/data/configdb
+    networks:
+      - perfume-network-prod
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/perfume_auth --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Pas de port exposé (sécurité - seulement réseau interne)
+
+  auth-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.production
+    container_name: perfume-auth-service-prod
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      MONGODB_URI: mongodb://${MONGO_ROOT_USER}:${MONGO_ROOT_PASSWORD}@mongodb:27017/perfume_auth?authSource=admin
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - perfume-network-prod
+    # Resource limits (sécurité)
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+volumes:
+  mongodb_data_prod:
+  mongodb_config_prod:
+
+networks:
+  perfume-network-prod:
+    driver: bridge

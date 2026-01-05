@@ -2,9 +2,14 @@
   "name": "perfume-ecommerce-microservices",
   "private": true,
   "scripts": {
-    "build": "turbo run build",
     "dev": "turbo run dev",
+    "build": "turbo run build",
+    "test": "turbo run test",
     "lint": "turbo run lint",
+    "clean": "turbo run clean",
+    "auth:dev": "turbo run dev --filter=auth-service",
+    "auth:build": "turbo run build --filter=auth-service",
+    "auth:test": "turbo run test --filter=auth-service",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "check-types": "turbo run check-types"
   },

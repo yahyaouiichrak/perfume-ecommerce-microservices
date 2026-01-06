@@ -1,4 +1,17 @@
-  test:
+name: Auth Service CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '20'
+
+jobs:   # <-- obligatoire
+  test: # <-- ton job commence ici
     name: 🧪 Tests & Linting
     runs-on: ubuntu-latest
 

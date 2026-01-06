@@ -1,0 +1,230 @@
+name: Auth Service CI/CD
+
+# 🎯 Déclenche le workflow sur :
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'apps/auth-service/**'
+      - '.github/workflows/auth-service-ci-cd.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'apps/auth-service/**'
+
+# Variables d'environnement globales
+env:
+  SERVICE_NAME: auth-service
+  DOCKER_IMAGE: ichrakyhy/perfume-auth-service
+  NODE_VERSION: '20'
+
+jobs:
+  # ============================================
+  # JOB 1: Tests & Quality Checks
+  # ============================================
+  test:
+    name: 🧪 Tests & Linting
+    runs-on: ubuntu-latest
+    
+    defaults:
+      run:
+        working-directory: ./apps/auth-service
+    
+    steps:
+      # 1. Checkout du code
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Setup Node.js
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # 3. Setup pnpm
+      - name: 📦 Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      # 4. Cache des dépendances
+      - name: 💾 Cache pnpm dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.pnpm-store
+            **/node_modules
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      # 5. Installation des dépendances
+      - name: 📥 Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # 6. Linting
+      - name: 🔍 Run linting
+        run: pnpm lint
+
+      # 7. Tests avec coverage
+      - name: 🧪 Run tests with coverage
+        run: pnpm test:ci
+        env:
+          NODE_ENV: test
+
+      # 8. Upload coverage à Codecov (optionnel)
+      - name: 📊 Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./apps/auth-service/coverage/lcov.info
+          flags: auth-service
+          name: auth-service-coverage
+        continue-on-error: true
+
+      # 9. Vérifier le seuil de coverage
+      - name: ✅ Check coverage threshold
+        run: |
+          COVERAGE=$(grep -o '"lines":[0-9.]*' coverage/coverage-summary.json | head -1 | grep -o '[0-9.]*')
+          echo "Coverage: $COVERAGE%"
+          if (( $(echo "$COVERAGE < 70" | bc -l) )); then
+            echo "❌ Coverage is below 70% ($COVERAGE%)"
+            exit 1
+          fi
+          echo "✅ Coverage is acceptable ($COVERAGE%)"
+
+  # ============================================
+  # JOB 2: Build & Push Docker Image
+  # ============================================
+  build:
+    name: 🐳 Build & Push Docker
+    runs-on: ubuntu-latest
+    needs: test  # Attend que les tests passent
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    
+    defaults:
+      run:
+        working-directory: ./apps/auth-service
+    
+    steps:
+      # 1. Checkout du code
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Setup Docker Buildx (pour multi-platform builds)
+      - name: 🔧 Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 3. Login à Docker Hub
+      - name: 🔐 Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ichrakyhy
+          password: ${{ secrets.DOCKER_HUB_TOKEN }}
+
+      # 4. Extraire metadata (tags, labels)
+      - name: 🏷️ Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKER_IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      # 5. Build et Push l'image
+      - name: 🏗️ Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./apps/auth-service
+          file: ./apps/auth-service/Dockerfile.production
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=${{ env.DOCKER_IMAGE }}:buildcache
+          cache-to: type=registry,ref=${{ env.DOCKER_IMAGE }}:buildcache,mode=max
+          platforms: linux/amd64
+
+      # 6. Afficher le résumé
+      - name: 📋 Image Summary
+        run: |
+          echo "### 🐳 Docker Image Built Successfully!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`${{ env.DOCKER_IMAGE }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Tags:** \`${{ steps.meta.outputs.tags }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Pull command: \`docker pull ${{ env.DOCKER_IMAGE }}:latest\`" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================
+  # JOB 3: Security Scan (optionnel mais recommandé)
+  # ============================================
+  security:
+    name: 🔒 Security Scan
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+      # 1. Checkout du code
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Run Trivy vulnerability scanner
+      - name: 🔍 Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.DOCKER_IMAGE }}:latest
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      # 3. Upload résultats à GitHub Security
+      - name: 📤 Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: 'trivy-results.sarif'
+        continue-on-error: true
+
+  # ============================================
+  # JOB 4: Deploy (optionnel - à configurer selon votre infra)
+  # ============================================
+  deploy:
+    name: 🚀 Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build, security]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment:
+      name: production
+      url: https://api.your-domain.com
+    
+    steps:
+      # 1. Checkout du code
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Deploy via SSH (exemple - à adapter)
+      - name: 🚀 Deploy to server
+        run: |
+          echo "🚀 Déploiement à configurer selon votre infrastructure"
+          echo "Options: AWS ECS, Kubernetes, VPS avec docker-compose, etc."
+          # Exemple pour VPS avec docker-compose:
+          # - SSH vers le serveur
+          # - docker-compose pull
+          # - docker-compose up -d
+
+      # 3. Health check
+      - name: 🏥 Health check
+        run: |
+          echo "⏳ Waiting for service to be ready..."
+          sleep 10
+          # curl -f https://api.your-domain.com/health || exit 1
+          echo "✅ Service is healthy"
+
+      # 4. Notification (optionnel)
+      - name: 📢 Notify deployment
+        run: |
+          echo "### 🎉 Deployment Successful!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** Production" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`${{ env.DOCKER_IMAGE }}:latest\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY

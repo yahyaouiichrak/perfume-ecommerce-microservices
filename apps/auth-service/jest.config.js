@@ -17,7 +17,7 @@ module.exports = {
   ],
 
   coverageDirectory: 'coverage',
-  coverageReporters: ['text', 'lcov', 'html'],
+  coverageReporters: ['text', 'lcov', 'html' , 'json-summary'],
 
   // ➜ 10 minutes pour le TOUT PREMIER download (~509 MB)
   testTimeout: 600_000,
